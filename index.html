@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strategic Voting & Arrow's Impossibility Theorem</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .rank-select { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 2px 4px; font-size: 12px; }
+    .rank-select:focus { outline: 2px solid #6366f1; }
+    .winner-badge { background: #16a34a; }
+    .tie-badge { background: #ca8a04; }
+    .cycle-arrow { color: #f87171; }
+  </style>
+</head>
+<body class="min-h-screen text-white flex flex-col items-center p-4 gap-6">
+  <header class="text-center mt-2">
+    <h1 class="text-2xl font-bold text-indigo-300">Strategic Voting Simulator</h1>
+    <p class="text-sm text-gray-400">Arrow's Impossibility Theorem in Action</p>
+  </header>
+
+  <div class="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+    <!-- Candidates panel -->
+    <div class="bg-slate-900 rounded-xl p-4 flex flex-col gap-3">
+      <h2 class="font-semibold text-slate-200 text-sm uppercase tracking-wide">Candidates (3–5)</h2>
+      <div id="candidateList" class="flex flex-col gap-2" role="list" aria-label="Candidate list"></div>
+      <div class="flex gap-2">
+        <input id="newCandidateName" type="text" placeholder="Candidate name…" maxlength="20"
+          class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          aria-label="New candidate name" />
+        <button onclick="addCandidate()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm font-medium transition" aria-label="Add candidate">Add</button>
+      </div>
+    </div>
+
+    <!-- Voter groups panel -->
+    <div class="bg-slate-900 rounded-xl p-4 flex flex-col gap-3">
+      <h2 class="font-semibold text-slate-200 text-sm uppercase tracking-wide">Voter Groups (3–5)</h2>
+      <div id="voterGroupList" class="flex flex-col gap-2" role="list" aria-label="Voter group list"></div>
+      <button onclick="addVoterGroup()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-medium transition" aria-label="Add voter group">+ Add Group</button>
+    </div>
+
+  </div>
+
+  <!-- Run election button -->
+  <button onclick="runElection()" class="bg-indigo-600 hover:bg-indigo-500 px-8 py-3 rounded-xl text-base font-bold transition shadow-lg" aria-label="Run election">
+    Run Election
+  </button>
+
+  <!-- Results -->
+  <div id="results" class="w-full max-w-4xl hidden" aria-live="polite">
+    <div class="bg-slate-900 rounded-xl p-4 flex flex-col gap-4">
+      <h2 class="font-semibold text-slate-200 text-sm uppercase tracking-wide">Election Results</h2>
+
+      <!-- Methods table -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm border-collapse" role="table" aria-label="Voting method results">
+          <thead>
+            <tr class="border-b border-slate-700">
+              <th class="text-left py-2 pr-4 text-slate-400 font-medium">Method</th>
+              <th class="text-left py-2 pr-4 text-slate-400 font-medium">Winner</th>
+              <th class="text-left py-2 text-slate-400 font-medium">Scores / Notes</th>
+            </tr>
+          </thead>
+          <tbody id="resultsTable"></tbody>
+        </table>
+      </div>
+
+      <!-- Arrow's impossibility note -->
+      <div id="arrowNote" class="hidden bg-amber-900/30 border border-amber-700 rounded-lg p-3 text-sm text-amber-200"></div>
+
+      <!-- Condorcet cycle -->
+      <div id="condorcetCycle" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-3">
+        <h3 class="font-semibold text-red-300 text-sm mb-2">Condorcet Cycle Detected</h3>
+        <p id="cycleText" class="text-sm text-red-200 font-mono"></p>
+        <p class="text-xs text-red-400 mt-1">No pairwise unbeatable candidate exists — majority preferences are intransitive.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <footer class="text-xs text-gray-600 pb-4 text-center max-w-xl">
+    Arrow's Impossibility Theorem (1951): No ranked-choice voting method satisfies all of unanimity, independence of irrelevant alternatives, and non-dictatorship simultaneously.
+    Different methods produce different winners — demonstrating the theorem.
+  </footer>
+
+<script>
+(function() {
+  const STORAGE_KEY = 'arrows_scenario_v1';
+
+  let candidates = ['Alice', 'Bob', 'Carol'];
+  let voterGroups = [
+    { name: 'Group A', size: 40, prefs: [0, 1, 2] },
+    { name: 'Group B', size: 35, prefs: [1, 2, 0] },
+    { name: 'Group C', size: 25, prefs: [2, 0, 1] }
+  ];
+
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ candidates, voterGroups }));
+    } catch(e) {}
+  }
+
+  function loadState() {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (s) {
+        const d = JSON.parse(s);
+        if (Array.isArray(d.candidates) && d.candidates.length >= 2) candidates = d.candidates;
+        if (Array.isArray(d.voterGroups) && d.voterGroups.length >= 1) voterGroups = d.voterGroups;
+        // Normalise prefs length
+        voterGroups.forEach(g => {
+          if (!Array.isArray(g.prefs) || g.prefs.length !== candidates.length) {
+            g.prefs = candidates.map((_, i) => i);
+          }
+        });
+      }
+    } catch(e) {}
+  }
+
+  window.addCandidate = function() {
+    if (candidates.length >= 5) { alert('Maximum 5 candidates.'); return; }
+    const inp = document.getElementById('newCandidateName');
+    const name = inp.value.trim();
+    if (!name) return;
+    if (candidates.includes(name)) { alert('Duplicate name.'); return; }
+    candidates.push(name);
+    // Add to all voter group prefs
+    voterGroups.forEach(g => g.prefs.push(candidates.length - 1));
+    inp.value = '';
+    saveState();
+    renderAll();
+  };
+
+  function removeCandidate(idx) {
+    if (candidates.length <= 3) { alert('Minimum 3 candidates.'); return; }
+    candidates.splice(idx, 1);
+    voterGroups.forEach(g => {
+      g.prefs = g.prefs.filter(p => p !== idx).map(p => p > idx ? p - 1 : p);
+    });
+    saveState();
+    renderAll();
+  }
+
+  window.addVoterGroup = function() {
+    if (voterGroups.length >= 5) { alert('Maximum 5 voter groups.'); return; }
+    voterGroups.push({ name: 'Group ' + String.fromCharCode(65 + voterGroups.length), size: 20, prefs: candidates.map((_, i) => i) });
+    saveState();
+    renderAll();
+  };
+
+  function removeVoterGroup(idx) {
+    if (voterGroups.length <= 3) { alert('Minimum 3 groups.'); return; }
+    voterGroups.splice(idx, 1);
+    saveState();
+    renderAll();
+  }
+
+  function renderCandidates() {
+    const el = document.getElementById('candidateList');
+    el.innerHTML = '';
+    candidates.forEach((c, i) => {
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-2';
+      row.setAttribute('role', 'listitem');
+
+      const badge = document.createElement('span');
+      badge.className = 'w-6 h-6 rounded-full bg-indigo-700 flex items-center justify-center text-xs font-bold';
+      badge.textContent = String.fromCharCode(65 + i);
+
+      const name = document.createElement('span');
+      name.className = 'flex-1 text-sm';
+      name.textContent = c;
+
+      const btn = document.createElement('button');
+      btn.className = 'text-xs text-red-400 hover:text-red-300 transition';
+      btn.textContent = 'Remove';
+      btn.setAttribute('aria-label', 'Remove candidate ' + c);
+      btn.onclick = () => removeCandidate(i);
+
+      row.appendChild(badge);
+      row.appendChild(name);
+      row.appendChild(btn);
+      el.appendChild(row);
+    });
+  }
+
+  function renderVoterGroups() {
+    const el = document.getElementById('voterGroupList');
+    el.innerHTML = '';
+    voterGroups.forEach((g, gi) => {
+      const row = document.createElement('div');
+      row.className = 'bg-slate-800 rounded-lg p-3 flex flex-col gap-2';
+      row.setAttribute('role', 'listitem');
+
+      // Header row
+      const header = document.createElement('div');
+      header.className = 'flex items-center gap-2';
+
+      const nameInp = document.createElement('input');
+      nameInp.type = 'text';
+      nameInp.value = g.name;
+      nameInp.maxLength = 15;
+      nameInp.className = 'bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+      nameInp.setAttribute('aria-label', 'Group name');
+      nameInp.oninput = () => { g.name = nameInp.value; saveState(); };
+
+      const sizeLabel = document.createElement('label');
+      sizeLabel.className = 'text-xs text-slate-400';
+      sizeLabel.textContent = 'Size:';
+
+      const sizeInp = document.createElement('input');
+      sizeInp.type = 'number';
+      sizeInp.min = '1';
+      sizeInp.max = '9999';
+      sizeInp.value = g.size;
+      sizeInp.className = 'bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+      sizeInp.setAttribute('aria-label', 'Group size');
+      sizeInp.oninput = () => { g.size = Math.max(1, parseInt(sizeInp.value) || 1); saveState(); };
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'ml-auto text-xs text-red-400 hover:text-red-300 transition';
+      removeBtn.textContent = 'Remove';
+      removeBtn.setAttribute('aria-label', 'Remove voter group ' + g.name);
+      removeBtn.onclick = () => removeVoterGroup(gi);
+
+      header.appendChild(nameInp);
+      header.appendChild(sizeLabel);
+      header.appendChild(sizeInp);
+      header.appendChild(removeBtn);
+      row.appendChild(header);
+
+      // Preference ranking
+      const prefRow = document.createElement('div');
+      prefRow.className = 'flex items-center gap-1 flex-wrap';
+
+      const prefLabel = document.createElement('span');
+      prefLabel.className = 'text-xs text-slate-400 mr-1';
+      prefLabel.textContent = 'Rank:';
+      prefRow.appendChild(prefLabel);
+
+      // Ensure prefs has all candidates
+      while (g.prefs.length < candidates.length) g.prefs.push(g.prefs.length);
+      g.prefs = g.prefs.filter(p => p < candidates.length);
+      if (g.prefs.length < candidates.length) {
+        for (let k = 0; k < candidates.length; k++) if (!g.prefs.includes(k)) g.prefs.push(k);
+      }
+
+      g.prefs.forEach((cIdx, rank) => {
+        const rankLabel = document.createElement('span');
+        rankLabel.className = 'text-xs text-slate-500';
+        rankLabel.textContent = (rank + 1) + '.';
+
+        const sel = document.createElement('select');
+        sel.className = 'rank-select';
+        sel.setAttribute('aria-label', `Rank ${rank + 1} choice for ${g.name}`);
+        candidates.forEach((c, ci) => {
+          const opt = document.createElement('option');
+          opt.value = ci;
+          opt.textContent = c;
+          if (ci === cIdx) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        sel.onchange = () => {
+          const newVal = parseInt(sel.value);
+          const oldVal = g.prefs[rank];
+          // Swap
+          const otherIdx = g.prefs.indexOf(newVal);
+          if (otherIdx !== -1) g.prefs[otherIdx] = oldVal;
+          g.prefs[rank] = newVal;
+          saveState();
+          renderVoterGroups();
+        };
+
+        prefRow.appendChild(rankLabel);
+        prefRow.appendChild(sel);
+      });
+      row.appendChild(prefRow);
+      el.appendChild(row);
+    });
+  }
+
+  function renderAll() {
+    renderCandidates();
+    renderVoterGroups();
+    document.getElementById('results').classList.add('hidden');
+  }
+
+  // === Voting Methods ===
+
+  function totalVoters() {
+    return voterGroups.reduce((s, g) => s + g.size, 0);
+  }
+
+  // Plurality: first-choice votes
+  function plurality() {
+    const scores = new Array(candidates.length).fill(0);
+    voterGroups.forEach(g => { scores[g.prefs[0]] += g.size; });
+    const max = Math.max(...scores);
+    return { scores, winner: candidates[scores.indexOf(max)], winnerIdx: scores.indexOf(max), detail: scores.map((s, i) => candidates[i] + ': ' + s).join(', ') };
+  }
+
+  // Borda: n-1 pts for 1st, n-2 for 2nd, etc.
+  function borda() {
+    const n = candidates.length;
+    const scores = new Array(n).fill(0);
+    voterGroups.forEach(g => {
+      g.prefs.forEach((cIdx, rank) => { scores[cIdx] += g.size * (n - 1 - rank); });
+    });
+    const max = Math.max(...scores);
+    return { scores, winner: candidates[scores.indexOf(max)], winnerIdx: scores.indexOf(max), detail: scores.map((s, i) => candidates[i] + ': ' + s).join(', ') };
+  }
+
+  // Condorcet: pairwise majority
+  function condorcet() {
+    const n = candidates.length;
+    // pairwise[i][j] = total voters preferring i over j
+    const pairwise = Array.from({ length: n }, () => new Array(n).fill(0));
+    voterGroups.forEach(g => {
+      for (let a = 0; a < n; a++) {
+        for (let b = 0; b < n; b++) {
+          if (a === b) continue;
+          const rankA = g.prefs.indexOf(a);
+          const rankB = g.prefs.indexOf(b);
+          if (rankA < rankB) pairwise[a][b] += g.size;
+        }
+      }
+    });
+    const total = totalVoters();
+    // Find Condorcet winner: beats everyone
+    let winner = null;
+    let winnerIdx = -1;
+    for (let i = 0; i < n; i++) {
+      let beatsAll = true;
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        if (pairwise[i][j] <= total / 2) { beatsAll = false; break; }
+      }
+      if (beatsAll) { winner = candidates[i]; winnerIdx = i; break; }
+    }
+    // Detect cycles
+    const cycles = [];
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        for (let k = 0; k < n; k++) {
+          if (k === i || k === j) continue;
+          if (pairwise[i][j] > total / 2 && pairwise[j][k] > total / 2 && pairwise[k][i] > total / 2) {
+            const cyc = candidates[i] + ' > ' + candidates[j] + ' > ' + candidates[k] + ' > ' + candidates[i];
+            if (!cycles.includes(cyc)) cycles.push(cyc);
+          }
+        }
+      }
+    }
+    const detail = winner ? '' : 'No Condorcet winner' + (cycles.length ? ' (cycle!)' : '');
+    return { pairwise, winner: winner || '(none — cycle)', winnerIdx, cycles, detail };
+  }
+
+  // IRV: instant-runoff voting
+  function irv() {
+    const n = candidates.length;
+    let eliminated = new Set();
+    let remaining = [...Array(n).keys()];
+    let rounds = [];
+
+    while (remaining.length > 1) {
+      const scores = new Array(n).fill(0);
+      voterGroups.forEach(g => {
+        // First non-eliminated choice
+        for (const p of g.prefs) {
+          if (!eliminated.has(p)) { scores[p] += g.size; break; }
+        }
+      });
+      const total = totalVoters();
+      // Check majority
+      for (const c of remaining) {
+        if (scores[c] > total / 2) {
+          return { winner: candidates[c], winnerIdx: c, rounds, detail: 'Majority: ' + Math.round(scores[c] / total * 100) + '%' };
+        }
+      }
+      // Eliminate lowest
+      let minScore = Infinity, minIdx = -1;
+      for (const c of remaining) {
+        if (scores[c] < minScore) { minScore = scores[c]; minIdx = c; }
+      }
+      rounds.push('Eliminated: ' + candidates[minIdx]);
+      eliminated.add(minIdx);
+      remaining = remaining.filter(c => c !== minIdx);
+    }
+    return { winner: candidates[remaining[0]], winnerIdx: remaining[0], rounds, detail: rounds.join(' → ') };
+  }
+
+  // Approval: approve all candidates ranked above last
+  function approval() {
+    const n = candidates.length;
+    const scores = new Array(n).fill(0);
+    voterGroups.forEach(g => {
+      // Approve all except last-ranked
+      for (let r = 0; r < g.prefs.length - 1; r++) {
+        scores[g.prefs[r]] += g.size;
+      }
+    });
+    const max = Math.max(...scores);
+    return { scores, winner: candidates[scores.indexOf(max)], winnerIdx: scores.indexOf(max), detail: scores.map((s, i) => candidates[i] + ': ' + s).join(', ') };
+  }
+
+  window.runElection = function() {
+    saveState();
+    const pRes = plurality();
+    const bRes = borda();
+    const cRes = condorcet();
+    const iRes = irv();
+    const aRes = approval();
+
+    const methods = [
+      { name: 'Plurality', res: pRes },
+      { name: 'Borda Count', res: bRes },
+      { name: 'Condorcet', res: cRes },
+      { name: 'Instant Runoff (IRV)', res: iRes },
+      { name: 'Approval', res: aRes }
+    ];
+
+    const tbody = document.getElementById('resultsTable');
+    tbody.innerHTML = '';
+
+    methods.forEach(m => {
+      const tr = document.createElement('tr');
+      tr.className = 'border-b border-slate-800';
+
+      const tdMethod = document.createElement('td');
+      tdMethod.className = 'py-2 pr-4 font-medium text-slate-200';
+      tdMethod.textContent = m.name;
+
+      const tdWinner = document.createElement('td');
+      tdWinner.className = 'py-2 pr-4';
+      const badge = document.createElement('span');
+      badge.className = 'px-2 py-1 rounded-full text-xs font-bold bg-emerald-800 text-emerald-200';
+      badge.textContent = m.res.winner;
+      tdWinner.appendChild(badge);
+
+      const tdDetail = document.createElement('td');
+      tdDetail.className = 'py-2 text-xs text-slate-400';
+      tdDetail.textContent = m.res.detail || '';
+
+      tr.appendChild(tdMethod);
+      tr.appendChild(tdWinner);
+      tr.appendChild(tdDetail);
+      tbody.appendChild(tr);
+    });
+
+    // Check if winners differ
+    const winners = methods.map(m => m.res.winner).filter(w => w !== '(none — cycle)');
+    const uniqueWinners = new Set(winners);
+    const arrowDiv = document.getElementById('arrowNote');
+    if (uniqueWinners.size > 1) {
+      arrowDiv.classList.remove('hidden');
+      const wList = [...uniqueWinners].join(', ');
+      arrowDiv.textContent = "Arrow's Theorem demonstrated: Different voting methods produce different winners (" + wList + "). No single method satisfies all fairness criteria simultaneously.";
+    } else {
+      arrowDiv.classList.add('hidden');
+    }
+
+    // Condorcet cycles
+    const cycleDiv = document.getElementById('condorcetCycle');
+    const cycleText = document.getElementById('cycleText');
+    if (cRes.cycles && cRes.cycles.length > 0) {
+      cycleDiv.classList.remove('hidden');
+      cycleText.textContent = cRes.cycles.join('\n');
+    } else {
+      cycleDiv.classList.add('hidden');
+    }
+
+    document.getElementById('results').classList.remove('hidden');
+  };
+
+  loadState();
+  renderAll();
+})();
+</script>
+</body>
+</html>
